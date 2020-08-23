@@ -5,18 +5,25 @@ import { cloneDeep } from "lodash";
  * Each document contains a field, vector, which is represented as a Map<string, number>
  * where the key represents a term/dimension and number represents the tf-idf score.
  * @field vector represents the vector representation of the document.
+ * @field content is the text of the original document.
  * @field meta allows for the user to attach any desired metadata to the document.
  * This is especially useful for indexing documents in relation to the rest of the collection.
  */
 export class VectorizedDocument {
   private _vector: Map<string, number>;
   private _meta: Map<string, any>;
+  private _content: string;
   /** Constructs a Document from a RawDocument, populating the document with term frequencies.
    *  @param raw RawDocument to be converted to Document
    */
-  public constructor(vector: Map<string, number>, meta?: Map<string, any>) {
+  public constructor(
+    vector: Map<string, number>,
+    content: string,
+    meta?: Map<string, any>
+  ) {
     this._vector = new Map(vector);
     this._meta = meta ? cloneDeep(meta) : new Map<string, any>();
+    this._content = content;
   }
 
   /** @returns vectorized form of the Document */
@@ -37,6 +44,16 @@ export class VectorizedDocument {
   /** @param meta metadata of the document. */
   public set meta(meta: Map<string, any>) {
     this._meta = meta ? cloneDeep(meta) : new Map<string, any>();
+  }
+
+  /** @returns content of the Document */
+  public get content(): string {
+    return this._content;
+  }
+
+  /** @param content content of the document. */
+  public set content(content: string) {
+    this._content = content;
   }
 }
 
@@ -86,7 +103,7 @@ export type WordMappingSchema = (word: string) => string;
  * @description A class that models collections of documents into vector space models.
  */
 export class VectorSpaceModel {
-  private _similaritySchema: SimilaritySchema | undefined;
+  private _similaritySchema: SimilaritySchema;
   private _weighingSchema: WeighingSchema | undefined;
   private _wordMappingSchema: WordMappingSchema | undefined;
   /**
@@ -98,7 +115,7 @@ export class VectorSpaceModel {
   public constructor(
     similaritySchema: SimilaritySchema,
     weighingSchema?: WeighingSchema,
-    wordMappingSchema?: WordMappingSchema,
+    wordMappingSchema?: WordMappingSchema
   ) {
     this._similaritySchema = similaritySchema;
     this._wordMappingSchema = wordMappingSchema;
@@ -111,25 +128,63 @@ export class VectorSpaceModel {
    * @param collection Collection of documents to construct a vector space of. The query should not be included.
    * @param k Positive integer representing the top k number of results to return.
    */
-  public query(query: string, collection: RawDocument[], k: number): RawDocument[] {
+  public query(
+    query: string,
+    collection: RawDocument[],
+    k: number
+  ): RawDocument[] {
+    if (k > collection.length) {
+      throw Error("Parameter k cannot be greater than collection size.");
+    } else if (k <= 0 || k !== Math.floor(k)) {
+      throw Error("Parameter k must be a positive integer.");
+    } else if (query === "") {
+      throw Error("Empty query not allowed.");
+    } else if (collection.length === 0) {
+      return [];
+    }
     // Each term is a dimension
     const dimensions = new Set<string>();
-    // Mapping documents to vectors.
-    let vectors = collection.map((document: RawDocument) => {
-      const vector = new Map<string, number>();
-      (document.content || "").match(/\w+/g)?.forEach((rawWord: string) => {
-        const word = this._wordMappingSchema ? this._wordMappingSchema(rawWord) : rawWord;
-        dimensions.add(word);
-        const wordCount = vector.get(word) || 0;
-        vector.set(word, 1 + wordCount);
+    // Mapping documents and query to vectors.
+    let vectors = collection
+      .concat([{ content: query }])
+      .map((document: RawDocument) => {
+        const vector = new Map<string, number>();
+        const rawWords = (document.content || "").match(/\w+/g);
+        rawWords &&
+          rawWords.forEach((rawWord: string) => {
+            const word = this._wordMappingSchema
+              ? this._wordMappingSchema(rawWord)
+              : rawWord;
+            dimensions.add(word);
+            const wordCount = vector.get(word) || 0;
+            vector.set(word, 1 + wordCount);
+          });
+        return new VectorizedDocument(vector, document.content, document.meta);
       });
-      return new VectorizedDocument(vector, document.meta);
-    });
     // Assigning weights of the vectors based on a bag-of-words function
     vectors = this._weighingSchema
       ? this._weighingSchema(vectors, dimensions)
       : vectors;
-    return [];
+    const queryVector = vectors.pop();
+    // Score vectors
+    const scoredVectors: {
+      vd: VectorizedDocument;
+      score: number;
+    }[] = vectors.map((documentVector: VectorizedDocument) => {
+      return {
+        vd: documentVector,
+        score: queryVector
+          ? this._similaritySchema(queryVector, documentVector)
+          : 0,
+      };
+    });
+    scoredVectors.sort((a, b) => {
+      return a.score === b.score ? 0 : a.score > b.score ? 1 : -1;
+    });
+    const cream = scoredVectors.slice(0, k);
+    return cream.map((scoredVector) => {
+      return { content: scoredVector.vd.content, meta: scoredVector.vd.meta };
+    });
   }
 }
 
@@ -187,10 +242,10 @@ export const SimilaritySchemas = {
 
 /** A collection of vector operations that may be helpful when constructing similarity schemas. */
 export const VectorOperations = {
-  /** 
+  /**
    * @description Calculates the euclidiean length of a document.
    * @param vector Vectorized document to find length of.
-  */
+   */
   euclideanLength: (vector: VectorizedDocument) => {
     let length = 0;
     Array.from(vector.vector.values()).forEach((component: number) => {
