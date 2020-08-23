@@ -11,5 +11,9 @@
     "type": "git",
     "url": "https://github.com/FurkanToprak/VectorSpaceModel.git"
   },
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "@types/lodash": "^4.14.159",
+    "lodash": "^4.17.20"
+  }
 }
