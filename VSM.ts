@@ -54,143 +54,148 @@ export interface RawDocument {
 }
 
 /**
- * @definition Defines the various functions defining component weights in the vector space model.
+ * @definition Defines the family of functions defining component weights in the vector space model.
  * @param collection A non-empty list of vectorized documents.
  * @param dictionary A set enumerating the dimensions (all unique terms of the collection). The constructor of VectorSpaceModel computes the dictionary for the user;
- * All that must be specified is how to use the dictionary in the vector normalization function. See SimilaritySchemas enum for examples.
+ * @returns a normalized vector space.
+ * All that must be specified is how to use the dictionary in the vector normalization function. See Weighing Schema library for examples.
  */
 export type WeighingSchema = (
   collection: VectorizedDocument[],
   dictionary: Set<string>
 ) => VectorizedDocument[];
 
-/** Defines the various functions comparing vectors in the vector space model.
+/**
+ * @definition Defines the family of functions that provide a numerical comparison between two vectors.
+ * @param a A vectorized document
+ * @param b A vectorized document
+ * @return a metric of distance between the two vectors.
  */
 export type SimilaritySchema = (
   a: VectorizedDocument,
   b: VectorizedDocument
 ) => number;
 
-/** Defines a function, f_word, that maps a word so that similar variations are documented as the same word.
+/** Defines the family of functions that map a word to another word, typically used as a heuristic for equivalence among similar variations of the same word.
  *  Typically used for case/punctuation-insensitive models.
- *  @example A case-insensitive word mapping would be as following: f_word("Example") -> "example"
+ *  @example A case-insensitive word mapping would be as following: F("Example") -> "example"
  */
 export type WordMappingSchema = (word: string) => string;
 
 /**
- * @description A class that turns a collection of documents as a vector space model.
+ * @description A class that models collections of documents into vector space models.
  */
 export class VectorSpaceModel {
-  private _vectors: VectorizedDocument[];
-  private _dimensions: Set<string>;
+  private _similaritySchema: SimilaritySchema | undefined;
+  private _weighingSchema: WeighingSchema | undefined;
+  private _wordMappingSchema: WordMappingSchema | undefined;
   /**
-   * @description Creates a vector space out of a collection of documents and customizable mathematical functions.
-   * @param collection Collection of documents to construct a vector space of. The query should not be included.
+   * @param similaritySchema Function determining the metric of relevance between two vectorized documents. See SimilaritySchemas library for examples.
    * @param weighingSchema Function determining the weight of each term component of each document. If not specified (unadvisable), the document vectors will be
-   * prepopulated with term frequencies. See WeighingSchemas enum for examples.
-   * @param wordMappingSchema Function that maps variations of words into a specific word. See WordMappings enum for examples.
+   * prepopulated with term frequencies. See WeighingSchemas library for examples.
+   * @param wordMappingSchema Function that maps variations of words into a specific word. See WordMappings library for examples.
    */
   public constructor(
-    collection: RawDocument[],
+    similaritySchema: SimilaritySchema,
     weighingSchema?: WeighingSchema,
-    wordMappingSchema?: WordMappingSchema
+    wordMappingSchema?: WordMappingSchema,
   ) {
-    this._dimensions = new Set<string>();
-    const vectors = collection.map((document: RawDocument) => {
+    this._similaritySchema = similaritySchema;
+    this._wordMappingSchema = wordMappingSchema;
+    this._weighingSchema = weighingSchema;
+  }
+
+  /**
+   * @description Performs a query on a collection of documents, returning the top k results.
+   * @param query Query to perform on the collection.
+   * @param collection Collection of documents to construct a vector space of. The query should not be included.
+   * @param k Positive integer representing the top k number of results to return.
+   */
+  public query(query: string, collection: RawDocument[], k: number): RawDocument[] {
+    // Each term is a dimension
+    const dimensions = new Set<string>();
+    // Mapping documents to vectors.
+    let vectors = collection.map((document: RawDocument) => {
       const vector = new Map<string, number>();
       (document.content || "").match(/\w+/g)?.forEach((rawWord: string) => {
-        const word = wordMappingSchema ? wordMappingSchema(rawWord) : rawWord;
-        this._dimensions.add(word);
+        const word = this._wordMappingSchema ? this._wordMappingSchema(rawWord) : rawWord;
+        dimensions.add(word);
         const wordCount = vector.get(word) || 0;
         vector.set(word, 1 + wordCount);
       });
       return new VectorizedDocument(vector, document.meta);
     });
-    this._vectors = weighingSchema
-      ? weighingSchema(vectors, this._dimensions)
+    // Assigning weights of the vectors based on a bag-of-words function
+    vectors = this._weighingSchema
+      ? this._weighingSchema(vectors, dimensions)
       : vectors;
-  }
-
-  /** @returns The vectors in the vector space model. */
-  public get vectors(): VectorizedDocument[] {
-    return this._vectors;
-  }
-
-  /** @returns The dimensions of the vector space model. */
-  public get dimensions(): Set<string> {
-    return this._dimensions;
-  }
-
-  public query(
-    query: string,
-    k: number,
-    similarityFunction: SimilaritySchema
-  ): RawDocument[] {
     return [];
   }
 }
 
-/** A weighting function that utilizes term frequency and inverse document frequency. */
-export function tfidf(
-  vectorSpace: VectorizedDocument[],
-  dimensions: Set<string>
-): VectorizedDocument[] {
-  const normalizedVectorSpace = cloneDeep(vectorSpace);
-  const dictionary = dimensions;
-  dictionary.forEach((dimension: string) => {
-    // Number of documents in the collection that contain a term t
-    let documentFrequency = 0;
-    vectorSpace.forEach((document: VectorizedDocument) => {
+export const WordMappings = {
+  caseInsensitive: (word: string) => word.toLowerCase(),
+  noPunctuation: (word: string) => {
+    return word.replace(/[!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]/g, "");
+  },
+};
+
+export const WeighingSchemas = {
+  /** A weighing function that utilizes term frequency and inverse document frequency. */
+  tfidf: (vectorSpace: VectorizedDocument[], dimensions: Set<string>) => {
+    const normalizedVectorSpace = cloneDeep(vectorSpace);
+    const dictionary = dimensions;
+    dictionary.forEach((dimension: string) => {
+      // Number of documents in the collection that contain a term t
+      let documentFrequency = 0;
+      vectorSpace.forEach((document: VectorizedDocument) => {
         documentFrequency += document.vector.has(dimension) ? 1 : 0;
+      });
+      const idf = Math.log(normalizedVectorSpace.length / documentFrequency);
+      normalizedVectorSpace.forEach(
+        (vector: VectorizedDocument, index: number) => {
+          // The frequency of a term in a document
+          const tf = vector.vector.get(dimension) || 0;
+          const idftf = idf * tf;
+          normalizedVectorSpace[index].vector.set(dimension, idftf);
+        }
+      );
     });
+    return normalizedVectorSpace;
+  },
+};
 
-    const idf = Math.log(
-      normalizedVectorSpace.length / documentFrequency
-    );
-    normalizedVectorSpace.forEach(
-      (vector: VectorizedDocument, index: number) => {
-        // The frequency of a term in a document
-        const tf = vector.vector.get(dimension) || 0;
-        const idftf = idf * tf;
-        normalizedVectorSpace[index].vector.set(dimension, idftf);
-      }
-    );
-  });
-  return normalizedVectorSpace;
-}
-
-/** A word mapping function that makes all words case insensitive. */
-export function caseInsensitive(word: string): string {
-    return word.toLowerCase();
-}
-
-export function cosineSimilarity(a: VectorizedDocument, b: VectorizedDocument): number {
+export const SimilaritySchemas = {
+  cosineSimilarity: (a: VectorizedDocument, b: VectorizedDocument) => {
     let score = 0;
     // A dot product between vectors a & b.
-    Array.from(a.vector.entries()).forEach((aNthDimension: [string, number]) => {
+    Array.from(a.vector.entries()).forEach(
+      (aNthDimension: [string, number]) => {
         const bNthDimension = b.vector.get(aNthDimension[0]);
         if (bNthDimension) {
-            score += aNthDimension[1] * bNthDimension;
+          score += aNthDimension[1] * bNthDimension;
         }
-    });
-    return score / (euclideanLength(a) * euclideanLength(b));
-}
+      }
+    );
+    return (
+      score /
+      (VectorOperations.euclideanLength(a) *
+        VectorOperations.euclideanLength(b))
+    );
+  },
+};
 
-/** @description Computes the euclidean length of a vectorized document.
- *  @param vector Vector to compute euclidean length of.
- */
-export function euclideanLength(vector: VectorizedDocument): number {
+/** A collection of vector operations that may be helpful when constructing similarity schemas. */
+export const VectorOperations = {
+  /** 
+   * @description Calculates the euclidiean length of a document.
+   * @param vector Vectorized document to find length of.
+  */
+  euclideanLength: (vector: VectorizedDocument) => {
     let length = 0;
     Array.from(vector.vector.values()).forEach((component: number) => {
-        length += Math.pow(component, 2);
+      length += Math.pow(component, 2);
     });
     return Math.sqrt(length);
-}
-
-// export enum WordMappings {
-
-// }
-
-// export enum WeighingSchema {
-
-// }
+  },
+};
