@@ -8,17 +8,18 @@ const lodash_1 = require("lodash");
  * where the key represents a term/dimension and number represents the tf-idf score.
  * @field vector represents the vector representation of the document.
  * @field content is the text of the original document.
- * @field meta allows for the user to attach any desired metadata to the document.
- * This is especially useful for indexing documents in relation to the rest of the collection.
+ * @field meta allows for the user to attach any desired metadata to the document. This is especially useful for indexing documents in relation to the rest of the collection.
+ * @field score is the relevance metric of the score. This is initialized as NaN.
  */
 class VectorizedDocument {
     /** Constructs a Document from a RawDocument, populating the document with term frequencies.
      *  @param raw RawDocument to be converted to Document
      */
-    constructor(vector, content, meta) {
+    constructor(vector, content, score, meta) {
         this._vector = new Map(vector);
         this._meta = meta ? lodash_1.cloneDeep(meta) : new Map();
         this._content = content;
+        this._score = score || NaN;
     }
     /** @returns vectorized form of the Document */
     get vector() {
@@ -43,6 +44,14 @@ class VectorizedDocument {
     /** @param content content of the document. */
     set content(content) {
         this._content = content;
+    }
+    /** @returns score of the Document */
+    get score() {
+        return this._score;
+    }
+    /** @param score score of the document. */
+    set score(score) {
+        this._score = score;
     }
 }
 exports.VectorizedDocument = VectorizedDocument;
@@ -97,7 +106,7 @@ class VectorSpaceModel {
                     const wordCount = vector.get(word) || 0;
                     vector.set(word, 1 + wordCount);
                 });
-            return new VectorizedDocument(vector, document.content, document.meta);
+            return new VectorizedDocument(vector, document.content, undefined, document.meta);
         });
         // Assigning weights of the vectors based on a bag-of-words function
         vectors = this._weighingSchema
@@ -105,21 +114,13 @@ class VectorSpaceModel {
             : vectors;
         const queryVector = vectors.pop();
         // Score vectors
-        const scoredVectors = vectors.map((documentVector) => {
-            return {
-                vd: documentVector,
-                score: queryVector
-                    ? this._similaritySchema(queryVector, documentVector)
-                    : 0,
-            };
+        vectors.forEach((documentVector, index) => {
+            vectors[index].score = queryVector ? this._similaritySchema(queryVector, documentVector) : 0;
         });
-        scoredVectors.sort((a, b) => {
-            return a.score === b.score ? 0 : a.score > b.score ? 1 : -1;
+        vectors.sort((a, b) => {
+            return a.score === b.score ? 0 : a.score > b.score ? -1 : 1;
         });
-        const cream = scoredVectors.slice(0, k);
-        return cream.map((scoredVector) => {
-            return { content: scoredVector.vd.content, meta: scoredVector.vd.meta };
-        });
+        return vectors.slice(0, k);
     }
 }
 exports.VectorSpaceModel = VectorSpaceModel;

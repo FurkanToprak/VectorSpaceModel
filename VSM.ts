@@ -6,24 +6,27 @@ import { cloneDeep } from "lodash";
  * where the key represents a term/dimension and number represents the tf-idf score.
  * @field vector represents the vector representation of the document.
  * @field content is the text of the original document.
- * @field meta allows for the user to attach any desired metadata to the document.
- * This is especially useful for indexing documents in relation to the rest of the collection.
+ * @field meta allows for the user to attach any desired metadata to the document. This is especially useful for indexing documents in relation to the rest of the collection.
+ * @field score is the relevance metric of the score. This is initialized as NaN.
  */
 export class VectorizedDocument {
   private _vector: Map<string, number>;
   private _meta: Map<string, any>;
   private _content: string;
+  private _score: number;
   /** Constructs a Document from a RawDocument, populating the document with term frequencies.
    *  @param raw RawDocument to be converted to Document
    */
   public constructor(
     vector: Map<string, number>,
     content: string,
+    score?: number,
     meta?: Map<string, any>
   ) {
     this._vector = new Map(vector);
     this._meta = meta ? cloneDeep(meta) : new Map<string, any>();
     this._content = content;
+    this._score = score || NaN;
   }
 
   /** @returns vectorized form of the Document */
@@ -54,6 +57,16 @@ export class VectorizedDocument {
   /** @param content content of the document. */
   public set content(content: string) {
     this._content = content;
+  }
+
+  /** @returns score of the Document */
+  public get score(): number {
+    return this._score;
+  }
+
+  /** @param score score of the document. */
+  public set score(score: number) {
+    this._score = score;
   }
 }
 
@@ -132,7 +145,7 @@ export class VectorSpaceModel {
     query: string,
     collection: RawDocument[],
     k: number
-  ): RawDocument[] {
+  ): VectorizedDocument[] {
     if (k > collection.length) {
       throw Error("Parameter k cannot be greater than collection size.");
     } else if (k <= 0 || k !== Math.floor(k)) {
@@ -159,7 +172,7 @@ export class VectorSpaceModel {
             const wordCount = vector.get(word) || 0;
             vector.set(word, 1 + wordCount);
           });
-        return new VectorizedDocument(vector, document.content, document.meta);
+        return new VectorizedDocument(vector, document.content, undefined, document.meta);
       });
     // Assigning weights of the vectors based on a bag-of-words function
     vectors = this._weighingSchema
@@ -167,24 +180,13 @@ export class VectorSpaceModel {
       : vectors;
     const queryVector = vectors.pop();
     // Score vectors
-    const scoredVectors: {
-      vd: VectorizedDocument;
-      score: number;
-    }[] = vectors.map((documentVector: VectorizedDocument) => {
-      return {
-        vd: documentVector,
-        score: queryVector
-          ? this._similaritySchema(queryVector, documentVector)
-          : 0,
-      };
+    vectors.forEach((documentVector: VectorizedDocument, index: number) => {
+      vectors[index].score = queryVector ? this._similaritySchema(queryVector, documentVector) : 0;
     });
-    scoredVectors.sort((a, b) => {
-      return a.score === b.score ? 0 : a.score > b.score ? 1 : -1;
+    vectors.sort((a: VectorizedDocument, b: VectorizedDocument) => {
+      return a.score === b.score ? 0 : a.score > b.score ? -1 : 1;
     });
-    const cream = scoredVectors.slice(0, k);
-    return cream.map((scoredVector) => {
-      return { content: scoredVector.vd.content, meta: scoredVector.vd.meta };
-    });
+    return vectors.slice(0, k);
   }
 }
 
