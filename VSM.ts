@@ -222,18 +222,8 @@ export const WeighingSchemas = {
 
 export const SimilaritySchemas = {
   cosineSimilarity: (a: VectorizedDocument, b: VectorizedDocument) => {
-    let score = 0;
-    // A dot product between vectors a & b.
-    Array.from(a.vector.entries()).forEach(
-      (aNthDimension: [string, number]) => {
-        const bNthDimension = b.vector.get(aNthDimension[0]);
-        if (bNthDimension) {
-          score += aNthDimension[1] * bNthDimension;
-        }
-      }
-    );
     return (
-      score /
+      VectorOperations.dotProduct(a, b) /
       (VectorOperations.euclideanLength(a) *
         VectorOperations.euclideanLength(b))
     );
@@ -243,7 +233,7 @@ export const SimilaritySchemas = {
 /** A collection of vector operations that may be helpful when constructing similarity schemas. */
 export const VectorOperations = {
   /**
-   * @description Calculates the euclidiean length of a document.
+   * @returns The euclidiean length of a document.
    * @param vector Vectorized document to find length of.
    */
   euclideanLength: (vector: VectorizedDocument) => {
@@ -252,5 +242,23 @@ export const VectorOperations = {
       length += Math.pow(component, 2);
     });
     return Math.sqrt(length);
+  },
+
+  /** 
+   * @returns Calculates the dot product between two documents.
+   * @param a First vector.
+   * @param b Second vector.
+   */
+  dotProduct: (a: VectorizedDocument, b: VectorizedDocument) => {
+    let dp = 0;
+    Array.from(a.vector.entries()).forEach(
+      (aNthDimension: [string, number]) => {
+        const bNthDimension = b.vector.get(aNthDimension[0]);
+        if (bNthDimension) {
+          dp += aNthDimension[1] * bNthDimension;
+        }
+      }
+    );
+    return dp;
   },
 };
