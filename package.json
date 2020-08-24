@@ -1,6 +1,6 @@
 {
   "name": "vectorspacemodel",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A strongly-typed, light-weight library created in TypeScript that allows for an object-orientated, high-level, efficient approach to Vector Space Model computations.",
   "main": "VSM.js",
   "scripts": {
